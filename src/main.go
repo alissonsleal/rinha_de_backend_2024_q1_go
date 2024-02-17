@@ -63,8 +63,6 @@ func main() {
 			return
 		}
 
-		fmt.Println(transactions)
-
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 
