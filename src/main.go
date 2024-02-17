@@ -42,7 +42,7 @@ func main() {
 	}
 	defer db.Close()
 
-	db.SetMaxOpenConns(20)
+	db.SetMaxOpenConns(200)
 
 	fmt.Println("Connected to database")
 
