@@ -4,6 +4,8 @@
 
 - [**go**](https://golang.org): Go
 - [**pgx**](https://github.com/jackc/pgx): PostgreSQL driver and toolkit
+- [**PostgreSQL**](https://www.postgresql.org): Banco de dados relacional
+- [**nginx**](https://nginx.org): Servidor HTTP e proxy reverso
 
 ![](https://i.imgur.com/61UZakX.png)
 
