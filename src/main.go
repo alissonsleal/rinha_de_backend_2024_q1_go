@@ -42,6 +42,8 @@ func main() {
 	}
 	defer db.Close()
 
+	db.SetMaxOpenConns(20)
+
 	fmt.Println("Connected to database")
 
 	app := http.NewServeMux()
@@ -64,6 +66,7 @@ func main() {
 			}
 
 			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Println(err)
 			fmt.Fprint(w, err.Error())
 			return
 
@@ -72,6 +75,7 @@ func main() {
 		transactions, err := getLastTenTransactionsByClientId(parsedId, db)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Println(err)
 			fmt.Fprint(w, err.Error())
 			return
 		}
@@ -87,6 +91,7 @@ func main() {
 		jsonResponse, err := json.Marshal(&response)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Println(err)
 			fmt.Fprint(w, err.Error())
 			return
 		}
@@ -140,6 +145,7 @@ func main() {
 			}
 
 			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Println(err)
 			fmt.Fprint(w, err.Error())
 			return
 		}
@@ -150,6 +156,7 @@ func main() {
 		jsonResponse, err := json.Marshal(&response)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Println(err)
 			fmt.Fprint(w, err.Error())
 			return
 		}
@@ -197,7 +204,7 @@ type Transaction struct {
 }
 
 func getLastTenTransactionsByClientId(id int, db *sql.DB) ([]Transaction, error) {
-	rows, err := db.Query("SELECT amount, operation, description, created_at FROM transactions WHERE client_id = $1 ORDER BY created_at DESC LIMIT 10", id)
+	rows, err := db.Query("SELECT amount, operation, description, created_at FROM transactions WHERE client_id = $1 ORDER BY created_at DESC LIMIT 10;", id)
 	if err != nil {
 		return nil, err
 	}
@@ -227,10 +234,11 @@ func createTransaction(transaction TransactionBody, clientId int, db *sql.DB) (T
 	if err != nil {
 		return TransactionResponse{}, err
 	}
+	defer tx.Rollback()
 
 	var transactionResponse TransactionResponse
 
-	rows := tx.QueryRow("SELECT account_limit, balance FROM clients WHERE id = $1 FOR UPDATE", clientId)
+	rows := tx.QueryRow("SELECT account_limit, balance FROM clients WHERE id = $1 FOR UPDATE;", clientId)
 
 	err = rows.Scan(&transactionResponse.AccountLimit, &transactionResponse.Balance)
 	if err != nil {
@@ -254,12 +262,12 @@ func createTransaction(transaction TransactionBody, clientId int, db *sql.DB) (T
 		return TransactionResponse{}, fmt.Errorf("Insufficient funds")
 	}
 
-	_, err = tx.Exec("INSERT INTO transactions (client_id, amount, operation, description) VALUES ($1, $2, $3, $4)", clientId, transaction.Amount, transaction.Operation, transaction.Description)
+	_, err = tx.Exec("INSERT INTO transactions (client_id, amount, operation, description) VALUES ($1, $2, $3, $4);", clientId, transaction.Amount, transaction.Operation, transaction.Description)
 	if err != nil {
 		tx.Rollback()
 		return TransactionResponse{}, err
 	}
-	_, err = tx.Exec("UPDATE clients SET balance = $1 WHERE id = $2", newBalance, clientId)
+	_, err = tx.Exec("UPDATE clients SET balance = $1 WHERE id = $2;", newBalance, clientId)
 	if err != nil {
 		tx.Rollback()
 		return TransactionResponse{}, err
