@@ -2,12 +2,7 @@ version: '3.5'
 
 services:
   api01: &api
-    #
-    # image: alissonsleal/rinha-de-backend-2024-q1-go:latest
-    # instead of build...
-    build:
-      context: .
-      dockerfile: ./Dockerfile
+    image: alissonsleal/rinha-de-backend-2024-q1-go:latest
     hostname: api01
     restart: unless-stopped
     ulimits:
