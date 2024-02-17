@@ -18,6 +18,12 @@ type ExtractResponse struct {
 	Transactions   []Transaction `json:"ultimas_transacoes"`
 }
 
+type TransactionBody struct {
+	Amount      int    `json:"valor"`
+	Operation   string `json:"tipo"`
+	Description string `json:"descricao"`
+}
+
 func main() {
 	godotenv.Load()
 
@@ -51,15 +57,22 @@ func main() {
 
 		client, err := getClientById(parsedId, db)
 		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, "Client not found")
+			if err == sql.ErrNoRows {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, "Client not found")
+				return
+			}
+
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, err.Error())
 			return
+
 		}
 
 		transactions, err := getLastTenTransactionsByClientId(parsedId, db)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, "Internal server error")
+			fmt.Fprint(w, err.Error())
 			return
 		}
 
@@ -74,12 +87,76 @@ func main() {
 		jsonResponse, err := json.Marshal(&response)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, "Internal server error")
+			fmt.Fprint(w, err.Error())
+			return
+		}
+
+		fmt.Fprint(w, string(jsonResponse))
+		return
+
+	})
+
+	app.HandleFunc("POST /clientes/{id}/transacoes", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		parsedId, err := strconv.Atoi(id)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, "Invalid id")
+			return
+		}
+
+		var transaction TransactionBody
+		err = json.NewDecoder(r.Body).Decode(&transaction)
+		if err != nil {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			fmt.Fprint(w, "Invalid request body")
+			return
+		}
+
+		if transaction.Operation != "d" && transaction.Operation != "c" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			fmt.Fprint(w, "Invalid operation")
+			return
+		}
+
+		if len(transaction.Description) > 10 || len(transaction.Description) < 1 {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			fmt.Fprint(w, "Invalid description")
+			return
+		}
+
+		response, err := createTransaction(transaction, parsedId, db)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, "Client not found")
+				return
+			}
+
+			if err.Error() == "Insufficient funds" {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				fmt.Fprint(w, err.Error())
+				return
+			}
+
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		jsonResponse, err := json.Marshal(&response)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, err.Error())
 			return
 		}
 
 		fmt.Fprint(w, string(jsonResponse))
 
+		return
 	})
 
 	port := os.Getenv("APP_PORT")
@@ -138,4 +215,64 @@ func getLastTenTransactionsByClientId(id int, db *sql.DB) ([]Transaction, error)
 	}
 
 	return transactions, nil
+}
+
+type TransactionResponse struct {
+	AccountLimit int `json:"limite"`
+	Balance      int `json:"saldo"`
+}
+
+func createTransaction(transaction TransactionBody, clientId int, db *sql.DB) (TransactionResponse, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return TransactionResponse{}, err
+	}
+
+	var transactionResponse TransactionResponse
+
+	rows := tx.QueryRow("SELECT account_limit, balance FROM clients WHERE id = $1 FOR UPDATE", clientId)
+
+	err = rows.Scan(&transactionResponse.AccountLimit, &transactionResponse.Balance)
+	if err != nil {
+		fmt.Println(err)
+		tx.Rollback()
+		return TransactionResponse{}, err
+	}
+
+	var newBalance int
+
+	if transaction.Operation == "d" {
+		newBalance = transactionResponse.Balance - transaction.Amount
+	}
+
+	if transaction.Operation == "c" {
+		newBalance = transactionResponse.Balance + transaction.Amount
+	}
+
+	if newBalance < (transactionResponse.AccountLimit * -1) {
+		tx.Rollback()
+		return TransactionResponse{}, fmt.Errorf("Insufficient funds")
+	}
+
+	_, err = tx.Exec("INSERT INTO transactions (client_id, amount, operation, description) VALUES ($1, $2, $3, $4)", clientId, transaction.Amount, transaction.Operation, transaction.Description)
+	if err != nil {
+		tx.Rollback()
+		return TransactionResponse{}, err
+	}
+	_, err = tx.Exec("UPDATE clients SET balance = $1 WHERE id = $2", newBalance, clientId)
+	if err != nil {
+		tx.Rollback()
+		return TransactionResponse{}, err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return TransactionResponse{}, err
+	}
+
+	return TransactionResponse{
+		AccountLimit: transactionResponse.AccountLimit,
+		Balance:      newBalance,
+	}, nil
+
 }
